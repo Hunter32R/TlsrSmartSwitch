@@ -53,3 +53,6 @@ Further development:
 
 “Summation delivered” имеет более точные показания энергии с учетом “Power Factor”.
 
+![sens_pl0937.gif](https://raw.githubusercontent.com/pvvx/TlsrSmartSwitch/refs/heads/master/img/sens_pl0937.gif)
+
+
