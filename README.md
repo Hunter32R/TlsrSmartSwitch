@@ -15,7 +15,7 @@ Supported device models:
 
 The original FW structure for "Zigbee Smart Switch" was designed by [slacky1965](https://github.com/slacky1965).
 
-The current versions of the published alternative firmware retain compatibility with [slacky1965's](https://github.com/slacky1965/tuya_mini_relay_zrd) "quirks."
+The current versions of the published alternative firmware retain compatibility with [tuya_mini_relay_zrd](https://github.com/slacky1965/tuya_mini_relay_zrd) "quirks."
 
 Optimizations have been made:
 
@@ -24,35 +24,15 @@ Optimizations have been made:
 * Chip hardware usage.
 * Firmware loader for compatibility with OTA BLE and Zigbee variants.
 * Added a variant with the BL0937 sensor.
+* Custom settings of coefficients for the sensor.
+* Disabling the relay based on voltage or current threshold values.
 
 Further development:
 
-* Custom settings of coefficients for the sensor.
 * Adding a BLE beacon with the BTHome format.
-  
 
-## Передача показаний:
+---
 
-### Для устройств с датчиком BL0937:
+[Описание устройств с датчиком BL0937](https://github.com/TlsrSmartSwitch/README_BL0937.md).
 
-* Значения “Current” и “Voltage” регистрируются поочередно с шагом 1 секунды.
-* Значение “Power” регистрируются непрерывно с шагом 8 секунд с учетом “Power Factor” и имеет малое разрешение. “Summation delivered” набирается без потерь с максимальной точнотью.
-* Все показания обрабатываются с шагом 8 секунд. 
-* “Power Factor” не передается чипом и в данной версии FW не вычисляется. 
-
-### Передача показаний в Zigbee от BL0937 осуществляется в формате:
-
-![grf_pl0937.gif](https://raw.githubusercontent.com/pvvx/TlsrSmartSwitch/refs/heads/master/img/grf_pl0937.gif)
-
-* Current:  0.001 (A), минимальный шаг измерений:  2..3 mA
-* Voltage: 0.01 (V), минимальный шаг измерений: 30 mV 
-* Power:  3 Auto-mode: 0.1, 0.01 (W), минимум: 0.16 W
-* Summation delivered: 0.00001 (kWh), накопление с шагом менее 0.01 Wh
-
-Значение “Voltage” * “Current” может не совпадать со значением “Power”, так как “Power” выводится с учетом “Power Factor”.
-
-“Summation delivered” имеет более точные показания энергии с учетом “Power Factor”.
-
-![sens_pl0937.gif](https://raw.githubusercontent.com/pvvx/TlsrSmartSwitch/refs/heads/master/img/sens_pl0937.gif)
-
-
+[Описание устройств с датчиком BL0942](https://github.com/TlsrSmartSwitch/README_BL0942.md). 

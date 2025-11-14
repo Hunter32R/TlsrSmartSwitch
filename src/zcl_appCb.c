@@ -180,7 +180,7 @@ static void app_zclWriteReqCmd(uint8_t epId, uint16_t clusterId, zclWriteCmd_t *
 
     uint8_t numAttr = pWriteReqCmd->numAttr;
     zclWriteRec_t *attr = pWriteReqCmd->attrList;
-    bool save = false;
+    uint8_t save = 0;
     uint8_t idx = epId - 1;
     zcl_onOffCfgAttr_t *pOnOffCfg = zcl_onOffCfgAttrsGet();
     pOnOffCfg += idx;
@@ -193,7 +193,7 @@ static void app_zclWriteReqCmd(uint8_t epId, uint16_t clusterId, zclWriteCmd_t *
                 uint8_t startup = attr[i].attrData[0];
 //                printf("startup: 0x%02x, ep: %d\r\n", startup, epId);
                 relay_settings.startUpOnOff[idx] = startup;
-                save = true;
+                save |= 1;
             }
         }
     } else if (clusterId == ZCL_CLUSTER_GEN_ON_OFF_SWITCH_CONFIG) {
@@ -208,12 +208,12 @@ static void app_zclWriteReqCmd(uint8_t epId, uint16_t clusterId, zclWriteCmd_t *
                     relay_settings.switch_decoupled[idx] = CUSTOM_SWITCH_DECOUPLED_ON;
                     pOnOffCfg->custom_decoupled = CUSTOM_SWITCH_DECOUPLED_ON;
                 }
-                save = true;
+                save |= 1;
             } else if (attr[i].attrID == ZCL_ATTRID_SWITCH_ACTION) {
                 uint8_t action = attr[i].attrData[0];
 //                printf("action: 0x%02x, ep: %d\r\n", action, epId);
                 relay_settings.switchActions[idx] = action;
-                save = true;
+                save |= 1;
             } else if (attr[i].attrID == CUSTOM_ATTRID_DECOUPLED) {
                 uint8_t decoupled = attr[i].attrData[0];
 //                printf("decoupled: 0x%02x\r\n", decoupled);
@@ -224,12 +224,22 @@ static void app_zclWriteReqCmd(uint8_t epId, uint16_t clusterId, zclWriteCmd_t *
 //                    app_forcedReport(epId, clusterId, CUSTOM_ATTRID_DECOUPLED);
                 }
                 relay_settings.switch_decoupled[idx] = decoupled;
-                save = true;
+                save |= 1;
             }
         }
+    } else if (clusterId == ZCL_CLUSTER_MS_ELECTRICAL_MEASUREMENT) {
+    	 for (uint32_t i = 0; i < numAttr; i++) {
+    		 if(attr[i].attrID >= 0x2200 && attr[i].attrID < 0x2300) {
+    			 save |= 2;
+    		 } else { // ZCL_ATTRID_RMS_VOLTAGE_SWELL_PERIOD, ZCL_ATTRID_RMS_EXTREME_OVER_VOLTAGE..ZCL_ATTRID_RMS_VOLTAGE_SWELL
+    			 save |= 4;
+    		 }
+    	 }
     }
 
-    if (save) relay_settings_save();
+    if (save & 1) relay_settings_save();
+    if (save & 2) save_config_sensor();
+    if (save & 4) save_config_min_max();
 
 #ifdef ZCL_POLL_CTRL
     if(clusterId == ZCL_CLUSTER_GEN_POLL_CONTROL){

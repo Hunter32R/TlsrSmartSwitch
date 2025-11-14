@@ -1,4 +1,5 @@
 #include "app_main.h"
+#include "energy_save.h"
 
 #if !defined(ZCL_BASIC_MFG_NAME) || !defined(ZCL_BASIC_MODEL_ID)
 #error "defined ZCL_BASIC_MODEL_ID & ZCL_BASIC_MFG_NAME !"
@@ -448,11 +449,7 @@ zcl_seAttr_t g_zcl_seAttrs = {
     .status = 0,
     .device_type = 0,                                               // 0 - Electric Metering
     .mutipler = 1,
-#if USE_BL0942
-    .divisor = 100
-#else
     .divisor = 100000
-#endif
 };
 
 const zclAttrInfo_t se_attrTbl[] = {
@@ -477,11 +474,21 @@ zcl_msAttr_t g_zcl_msAttrs = {
     .current = 0, // 0xffff
     .voltage = 23000, // 0xffff,
     .power = 0, // 0xffff,
-    .mutipler = 1,
-    .divisor = 100,
-    .power_divisor = 100,  // 10/100/1000
-    .current_divisor = 1000
+    .mutipler = 1, // for all
+    .divisor = 100, // voltage, freq
+    .power_divisor = 100,  // 10/100/1000: in 0.1, 0.01, 0.001 W
+    .current_divisor = 1000 // in 0.001A
 };
+
+const zcl_config_min_max_t def_config_min_max = {
+	.max_voltage = 26000, // in 0.01V, = 0 - off
+	.min_voltage = 18000, // in 0.01V, = 0 - off
+	.max_current = 25000, // in 0.001A, = 0 - off
+	.time_max_current = 16 // in sec, minimum 8, step 8, = 0 - off
+};
+
+zcl_config_min_max_t config_min_max;
+zcl_config_min_max_t config_min_max_saved;
 
 const zclAttrInfo_t ms_attrTbl[] = {
     {ZCL_ATTRID_MEASUREMENT_TYPE,           ZCL_BITMAP32, R,    (uint8_t*)&g_zcl_msAttrs.type               },
@@ -490,16 +497,27 @@ const zclAttrInfo_t ms_attrTbl[] = {
     {ZCL_ATTRID_AC_FREQUENCY_MULTIPLIER,    ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.mutipler           },
     {ZCL_ATTRID_AC_FREQUENCY_DIVISOR,       ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.divisor            },
 #endif
-    {ZCL_ATTRID_RMS_CURRENT,                ZCL_UINT16,   RR,   (uint8_t*)&g_zcl_msAttrs.current            },
     {ZCL_ATTRID_RMS_VOLTAGE,                ZCL_UINT16,   RR,   (uint8_t*)&g_zcl_msAttrs.voltage            },
+    {ZCL_ATTRID_RMS_CURRENT,                ZCL_UINT16,   RR,   (uint8_t*)&g_zcl_msAttrs.current            },
     {ZCL_ATTRID_ACTIVE_POWER,               ZCL_INT16,    RR,   (uint8_t*)&g_zcl_msAttrs.power              },
+	{ZCL_ATTRID_RMS_VOLTAGE_SWELL_PERIOD,   ZCL_UINT16,   RW,   (uint8_t*)&config_min_max.time_max_current  },
     {ZCL_ATTRID_AC_VOLTAGE_MULTIPLIER,      ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.mutipler           },
     {ZCL_ATTRID_AC_VOLTAGE_DIVISOR,         ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.divisor            },
 	{ZCL_ATTRID_AC_CURRENT_MULTIPLIER,      ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.mutipler           },
     {ZCL_ATTRID_AC_CURRENT_DIVISOR,         ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.current_divisor    },
     {ZCL_ATTRID_AC_POWER_MULTIPLIER,        ZCL_UINT16,   R,    (uint8_t*)&g_zcl_msAttrs.mutipler           },
     {ZCL_ATTRID_AC_POWER_DIVISOR,           ZCL_UINT16,   RR,   (uint8_t*)&g_zcl_msAttrs.power_divisor      },
-    { ZCL_ATTRID_GLOBAL_CLUSTER_REVISION,   ZCL_UINT16,   R,    (uint8_t*)&zcl_attr_global_clusterRevision  },
+	{ZCL_ATTRID_RMS_EXTREME_OVER_VOLTAGE,   ZCL_INT16,    RW,   (uint8_t*)&config_min_max.max_voltage		},
+	{ZCL_ATTRID_RMS_EXTREME_UNDER_VOLTAGE,  ZCL_INT16,    RW,   (uint8_t*)&config_min_max.min_voltage		},
+	{ZCL_ATTRID_RMS_VOLTAGE_SWELL,  		ZCL_INT16,    RW,   (uint8_t*)&config_min_max.max_current		},
+	{0x2200,  		ZCL_UINT32,    RW,   (uint8_t*)&sensor_pwr_coef.current		},
+	{0x2201,  		ZCL_UINT32,    RW,   (uint8_t*)&sensor_pwr_coef.voltage		},
+	{0x2202,  		ZCL_UINT32,    RW,   (uint8_t*)&sensor_pwr_coef.power		},
+#if USE_BL0942
+	{0x2203,  		ZCL_UINT32,    RW,   (uint8_t*)&sensor_pwr_coef.energy		},
+	{0x2204,  		ZCL_UINT32,    RW,   (uint8_t*)&sensor_pwr_coef.freq		},
+#endif
+    {ZCL_ATTRID_GLOBAL_CLUSTER_REVISION,    ZCL_UINT16,   R,    (uint8_t*)&zcl_attr_global_clusterRevision  }
 };
 
 #define ZCL_MS_ATTR_NUM    sizeof(ms_attrTbl) / sizeof(zclAttrInfo_t)
@@ -550,6 +568,32 @@ uint8_t APP_CB_CLUSTER_NUM1 = (sizeof(g_appClusterList1)/sizeof(g_appClusterList
 //
 //uint8_t APP_CB_CLUSTER_NUM2 = (sizeof(g_appClusterList2)/sizeof(g_appClusterList2[0]));
 //
+
+nv_sts_t load_config_min_max(void) {
+#if NV_ENABLE
+	nv_sts_t ret = nv_flashReadNew(1, NV_MODULE_APP,  NV_ITEM_APP_CFG_MIN_MAX, sizeof(config_min_max), (uint8_t*)&config_min_max);
+	if(ret !=  NV_SUCC) {
+		memcpy(&config_min_max, &def_config_min_max, sizeof(config_min_max));
+	}
+	memcpy(&config_min_max_saved, &config_min_max, sizeof(config_min_max));
+	return ret;
+#else
+    return NV_ENABLE_PROTECT_ERROR;
+#endif
+}
+
+nv_sts_t save_config_min_max(void) {
+#if NV_ENABLE
+	nv_sts_t ret = NV_SUCC;
+	if(memcmp(&config_min_max_saved, &config_min_max, sizeof(config_min_max))) {
+		memcpy(&config_min_max_saved, &config_min_max, sizeof(config_min_max));
+		ret = nv_flashWriteNew(1, NV_MODULE_APP,  NV_ITEM_APP_CFG_MIN_MAX, sizeof(config_min_max), (uint8_t*)&config_min_max);
+	}
+    return ret;
+#else
+    return NV_ENABLE_PROTECT_ERROR;
+#endif
+}
 
 void populate_date_code(void) {
 	u8 month;

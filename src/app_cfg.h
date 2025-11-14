@@ -117,7 +117,9 @@ extern "C" {
  */
     #define BEGIN_USER_DATA_F512K             0x72000 // begin address for saving energy
     #define END_USER_DATA_F512K               0x76000 // end address for saving energy
-    #define NV_ITEM_APP_USER_CFG        (NV_ITEM_APP_GP_TRANS_TABLE + 1)        // see sdk/proj/drivers/drv_nv.h
+    #define NV_ITEM_APP_CFG_RELAY  		(NV_ITEM_APP_GP_TRANS_TABLE + 1)        // see sdk/proj/drivers/drv_nv.h
+	#define NV_ITEM_APP_CFG_MIN_MAX     (NV_ITEM_APP_GP_TRANS_TABLE + 2)
+	#define NV_ITEM_APP_CFG_SENSOR      (NV_ITEM_APP_GP_TRANS_TABLE + 3)
 
 /**********************************************************************
  * I2C driver type
@@ -308,7 +310,7 @@ typedef enum{
 
 //#define ZCL_POLL_CTRL_SUPPORT                      1 ?
 #define ZCL_POWER_CFG_SUPPORT                       OFF
-#define ZCL_GROUP_SUPPORT                           USE_GROUP
+#define ZCL_GROUP_SUPPORT                           ON
 #define ZCL_SCENE_SUPPORT                           ON
 #define ZCL_ON_OFF_SWITCH_CFG_SUPPORT               ON
 #define ZCL_OTA_SUPPORT                             ON

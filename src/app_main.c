@@ -92,7 +92,6 @@ void user_app_init(void)
 
 	populate_date_code();
 
-
     /* Initialize ZCL layer */
 	/* Register Incoming ZCL Foundation command/response messages */
     zcl_init(app_zclProcessIncomingMsg);
@@ -103,9 +102,11 @@ void user_app_init(void)
 
 	zcl_reportingTabInit();
 
-	start_message();
-	relay_settings_restore();
+//	start_message();
+	load_config_sensor();
+	load_config_min_max();
 	energy_restore();
+	relay_settings_restore();
 
 	/* Register ZCL specific cluster information */
     zcl_register(APP_ENDPOINT1, APP_CB_CLUSTER_NUM1, (zcl_specClusterInfo_t *)g_appClusterList1);
@@ -129,9 +130,6 @@ void user_app_init(void)
 #endif
 
     app_sensor_init();
-
-    TL_ZB_TIMER_SCHEDULE(app_monitoringCb, NULL, TIMEOUT_1SEC);
-    TL_ZB_TIMER_SCHEDULE(energy_timerCb, NULL, TIMEOUT_1MIN);
 
 //    printf("FLASH_ADDR_OF_OTA_IMAGE: 0x%08x\r\n", FLASH_ADDR_OF_OTA_IMAGE);
 //    printf("BEGIN_USER_DATA: 0x%x\r\n", BEGIN_USER_DATA);

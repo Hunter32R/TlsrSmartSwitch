@@ -110,6 +110,15 @@ typedef struct {
     uint16_t current_divisor;
 } zcl_msAttr_t;
 
+typedef struct {
+    int16_t max_voltage;
+    int16_t min_voltage;
+    int16_t max_current;
+    uint16_t time_max_current;
+} zcl_config_min_max_t;
+
+extern zcl_config_min_max_t config_min_max;
+
 extern uint8_t APP_CB_CLUSTER_NUM1;
 //extern uint8_t APP_CB_CLUSTER_NUM2;
 extern const zcl_specClusterInfo_t  g_appClusterList1[];
@@ -137,5 +146,7 @@ extern zcl_msAttr_t                 g_zcl_msAttrs;
 #define zcl_msAttrsGet()            &g_zcl_msAttrs;
 
 void populate_date_code(void);
+nv_sts_t load_config_min_max(void);
+nv_sts_t save_config_min_max(void);
 
 #endif /* SRC_INCLUDE_APP_ENDPOINT_CFG_H_ */

@@ -1,30 +1,12 @@
 #include "app_main.h"
 #if USE_BL0937
-#include "battery.h"
+#include "energy_save.h"
 
-//------- Save Energy ----
-
-// Address save energy count to Flash
-typedef struct {
-    uint32_t flash_addr_save;          /* flash page address saved */
-    uint32_t flash_addr_start;         /* flash page address start */
-    uint32_t flash_addr_end;           /* flash page address end   */
-} energy_cons_t;
-
-static energy_cons_t energy_cons;
-
-// Save energy count in Flash
-typedef struct {
-    uint64_t energy;
-    uint64_t xor_energy;
-} save_data_t;
-
-static save_data_t save_data;
+extern u64 mul32x32_64(u32 a, u32 b); // hard function (in div_mod.S)
 
 //--------- Work Data --------
 
-static uint8_t  first_start = true;     // flag
-static bool new_save_data = false;      // flag
+static uint16_t tik_max_current; // count max current, step 8 sec
 
 //--------- Data for calculating BL09377 --------
 
@@ -49,7 +31,7 @@ typedef struct {
 static old_fract_t old_fract; // Remainder from the previous division
 
 /*
- * Test Lamp: 100W ~229.5V 432 mA (period 1+1+1+1 sec)
+ * Test Lamp: 100W ~229.5V 432 mA (period: 1+1+1+1 sec)
  * cnt_voltage = 3780
  * (22950<<16)/3780=397897.14285714285714285714285714285714285714285714285714285714285714285714285714286
  * cnt_current = 79.5
@@ -59,48 +41,34 @@ static old_fract_t old_fract; // Remainder from the previous division
  * energy (=power/450):
  * 2162904.29/(60*60/8)=4806.453977777777777777777777777777777777777777777777777777777777777777777777778
  *
- * TODO: user set koef?
  */
-// Coefficient for period 8 sec
-#define BL0937_POWER_REF          (2162904/2) 	// x100 0..327.67W, x10: 327.67..3276.7W (divisor = 10, 100 - > V)
-#define BL0937_VOLTAGE_REF        (395464/2)  	// x100: 0..655.35V (divisor = 100 - > V)
-#define BL0937_CURRENT_REF        (356120/2) 	// x1000: 0..65.535A (divisor = 1000 - > A)
-#define BL0937_ENERGY_REF         (4806/2) 	    // x100 Wh (divisor = 100000 - > kWh)
+// Sensor Coefficients (for period 8 sec)
+#define BL0937_POWER_REF          (1081452) 	// x100 0..327.67W, x10: 327.67..3276.7W (divisor = 10, 100 - > W)
+#define BL0937_VOLTAGE_REF        (197732)  	// x100: 0..655.35V (divisor = 100 - > V)
+#define BL0937_CURRENT_REF        (178060) 		// x1000: 0..65.535A (divisor = 1000 - > A)
+#define BL0937_ENERGY_REF         ((BL0937_POWER_REF + 225)/450) //(=2403) x100 Wh (divisor = 100000 - > kWh)
 
-// Coefficient
-typedef struct {
-    uint32_t current;
-    uint32_t voltage;
-    uint32_t power;
-    uint32_t energy;
-} bl0937_coef_t;
-
-const bl0937_coef_t bl0937_coef = {
+const sensor_pwr_coef_t sensor_pwr_coef_def = {
 	    .current = BL0937_CURRENT_REF,
 	    .voltage = BL0937_VOLTAGE_REF,
 	    .power = BL0937_POWER_REF,
 	    .energy = BL0937_ENERGY_REF
 };
 
+sensor_pwr_coef_t sensor_pwr_coef;
+sensor_pwr_coef_t sensor_pwr_coef_saved;
+
 //--------- Initialization --------
 
 // Initializing Timers1 for BL0937
 static void timer1_gpio_init(GPIO_PinTypeDef pin,GPIO_PolTypeDef pol)
 {
-	gpio_set_func(pin ,AS_GPIO);
-	gpio_set_output_en(pin, 0); //disable output
-	gpio_set_input_en(pin ,1);//enable input
-/*
-	if(pol==POL_FALLING)
-	{
-		gpio_setup_up_down_resistor(pin,PM_PIN_PULLUP_10K);
-	}
-	else if(pol==POL_RISING)
-	{
-		gpio_setup_up_down_resistor(pin,PM_PIN_PULLDOWN_100K);
-	}
-*/
 	unsigned char bit = pin & 0xff;
+
+	gpio_set_func(pin, AS_GPIO);
+	gpio_set_output_en(pin, 0); //disable output
+	gpio_set_input_en(pin, 1);//enable input
+	gpio_setup_up_down_resistor(pin, PM_PIN_PULLUP_1M);
 
 	BM_SET(reg_gpio_irq_risc1_en(pin), bit);
 
@@ -124,20 +92,12 @@ static void timer1_gpio_init(GPIO_PinTypeDef pin,GPIO_PolTypeDef pol)
 // Initializing Timers2 for BL0937
 static void timer2_gpio_init(GPIO_PinTypeDef pin,GPIO_PolTypeDef pol)
 {
-	gpio_set_func(pin ,AS_GPIO);
-	gpio_set_output_en(pin, 0); //disable output
-	gpio_set_input_en(pin ,1);//enable input
-/*
-	if(pol==POL_FALLING)
-	{
-		gpio_setup_up_down_resistor(pin,PM_PIN_PULLUP_10K);
-	}
-	else if(pol==POL_RISING)
-	{
-		gpio_setup_up_down_resistor(pin,PM_PIN_PULLDOWN_100K);
-	}
-*/
 	unsigned char bit = pin & 0xff;
+
+	gpio_set_func(pin, AS_GPIO);
+	gpio_set_output_en(pin, 0); //disable output
+	gpio_set_input_en(pin, 1);//enable input
+	gpio_setup_up_down_resistor(pin, PM_PIN_PULLUP_1M);
 
 	BM_SET(reg_gpio_irq_risc2_en(pin), bit);
 
@@ -160,8 +120,12 @@ static void timer2_gpio_init(GPIO_PinTypeDef pin,GPIO_PolTypeDef pol)
 
 // Initializing Timers1,2 for BL0937
 void app_sensor_init(void) {
-	timer1_gpio_init(GPIO_CF, POL_RISING);
+	//bl0937_cnt.cnt_sel = 0;
+	gpio_write(GPIO_SEL, 0);
 	timer2_gpio_init(GPIO_CF1, POL_RISING);
+	timer1_gpio_init(GPIO_CF, POL_RISING);
+	TL_ZB_TIMER_SCHEDULE(app_monitoringCb, NULL, TIMEOUT_1SEC);
+    TL_ZB_TIMER_SCHEDULE(energy_timerCb, NULL, TIMEOUT_1MIN);
 }
 
 //--------- Monitoring --------
@@ -177,50 +141,71 @@ void bl0937_new_dataCb(void *args) {
     bl0937_cnt.cnt_voltage = 0;
     power = bl0937_cnt.cnt_power;
 
-    if (first_start) {
-        first_start = false;
+
+	current *= sensor_pwr_coef.current;
+    current += old_fract.current;
+    old_fract.current = current & 0xffff;
+    current >>= 16;
+    g_zcl_msAttrs.current = (uint16_t)current;
+
+    voltage *= sensor_pwr_coef.voltage;
+    voltage += old_fract.voltage;
+    old_fract.voltage = voltage & 0xffff;
+    voltage >>= 16;
+    g_zcl_msAttrs.voltage = (uint16_t)voltage;
+
+
+    energy = power;
+
+    power *= sensor_pwr_coef.power;
+    power += old_fract.power;
+    old_fract.power = power & 0xffff;
+    power >>= 16;
+
+    if(power > 327670) {
+        // x10: 327.6..3276.7W
+        power += 5;
+        power /= 10;
+        g_zcl_msAttrs.power_divisor = 10;
     } else {
-        current *= bl0937_coef.current;
-        current += old_fract.current;
-        old_fract.current = current & 0xffff;
-        current >>= 16;
-        g_zcl_msAttrs.current = (uint16_t)current;
+        // x100 0..327.67W
+        g_zcl_msAttrs.power_divisor = 100;
+    }
+    g_zcl_msAttrs.power = (int16_t)power;
 
-        voltage *= bl0937_coef.voltage;
-        voltage += old_fract.voltage;
-        old_fract.voltage = voltage & 0xffff;
-        voltage >>= 16;
-        g_zcl_msAttrs.voltage = (uint16_t)voltage;
-
-
-        energy = power;
-
-        power *= bl0937_coef.power;
-        power += old_fract.power;
-        old_fract.power = power & 0xffff;
-        power >>= 16;
-
-        if(power > 327670) {
-            // x10: 327.6..3276.7W
-            power += 5;
-            power /= 10;
-            g_zcl_msAttrs.power_divisor = 10;
-        } else {
-            // x100 0..327.67W
-            g_zcl_msAttrs.power_divisor = 100;
-        }
-        g_zcl_msAttrs.power = (int16_t)power;
-
-        energy *= bl0937_coef.energy;
-        energy += old_fract.energy;
-        old_fract.energy = energy & 0xffff;
-        energy >>= 16;
-        save_data.energy += energy;
-        g_zcl_seAttrs.cur_sum_delivered = save_data.energy;
-
-        //TODO: Calculate Power factor = ?
-
+    energy *= sensor_pwr_coef.energy;
+    energy += old_fract.energy;
+    old_fract.energy = energy & 0xffff;
+    energy >>= 16;
+	if(energy) {
+		save_data.energy += energy;
+		g_zcl_seAttrs.cur_sum_delivered = save_data.energy;
         new_save_data = true; // energy_save();
+	}
+
+	//TODO: Calculate Power factor = ?
+
+    if(config_min_max.min_voltage
+    && voltage < config_min_max.min_voltage) {
+		cmdOnOff_off(APP_ENDPOINT1);
+    	return;
+    }
+    if(config_min_max.max_voltage
+          && voltage > config_min_max.max_voltage) {
+		cmdOnOff_off(APP_ENDPOINT1);
+    	return;
+    }
+    if(config_min_max.max_current && config_min_max.time_max_current) {
+        if(power > config_min_max.max_current) {
+        	tik_max_current += 8;
+        	if(tik_max_current >= config_min_max.time_max_current) {
+        		tik_max_current = 0xffff;
+        		cmdOnOff_off(APP_ENDPOINT1);
+            	return;
+        	}
+        } else {
+        	tik_max_current = 0;
+        }
     }
 }
 
@@ -260,145 +245,41 @@ int32_t app_monitoringCb(void *arg) {
 		reg_tmr_ctrl |= FLD_TMR1_EN; // start timer
 		irq_restore(r);
 
-        TL_SCHEDULE_TASK(bl0937_new_dataCb, NULL);
+		TL_SCHEDULE_TASK(bl0937_new_dataCb, NULL);
 	}
-
 	return 0;
 }
 
-//--------- Save Energy --------
+//--------- Loading/Saving Sensor Coefficients --------
 
-// Clearing USER_DATA
-static void clear_user_data(void) {
-
-    uint32_t flash_addr = energy_cons.flash_addr_start;
-    while(flash_addr < energy_cons.flash_addr_end) {
-        flash_erase_sector(flash_addr);
-        flash_addr += FLASH_SECTOR_SIZE;
-    }
+nv_sts_t load_config_sensor(void) {
+#if NV_ENABLE
+	nv_sts_t ret = nv_flashReadNew(1, NV_MODULE_APP,  NV_ITEM_APP_CFG_SENSOR, sizeof(sensor_pwr_coef), (uint8_t*)&sensor_pwr_coef);
+	if(ret !=  NV_SUCC) {
+		memcpy(&sensor_pwr_coef, &sensor_pwr_coef_def, sizeof(sensor_pwr_coef));
+	}
+	memcpy(&sensor_pwr_coef_saved, &sensor_pwr_coef, sizeof(sensor_pwr_coef));
+	return ret;
+#else
+    return NV_ENABLE_PROTECT_ERROR;
+#endif
 }
 
-// Saving the energy meter
-static void save_dataCb(void *args) {
-
-	battery_detect(0);
-
-    if (save_data.xor_energy != ~save_data.energy) {
-
-        save_data.xor_energy = ~save_data.energy;
-
-        light_blink_start(1, 250, 250);
-
-        if (energy_cons.flash_addr_save == energy_cons.flash_addr_end) {
-            energy_cons.flash_addr_save = energy_cons.flash_addr_start;
-        }
-        if ((energy_cons.flash_addr_save & (FLASH_SECTOR_SIZE-1)) == 0) {
-            flash_erase(energy_cons.flash_addr_save);
-        }
-
-        flash_write(energy_cons.flash_addr_save, sizeof(save_data), (uint8_t*)&save_data);
-
-        energy_cons.flash_addr_save += sizeof(save_data);
-    }
-}
-
-// Initializing USER_DATA storage addresses in Flash memory
-static void init_save_addr_drv(void) {
-
-	u32 mid = flash_read_mid();
-	mid >>= 16;
-	mid &= 0xff;
-	if(mid >= FLASH_SIZE_1M) {
-        energy_cons.flash_addr_start = BEGIN_USER_DATA_F1M;
-        energy_cons.flash_addr_end = END_USER_DATA_F1M;
-    } else {
-        energy_cons.flash_addr_start = BEGIN_USER_DATA_F512K;
-        energy_cons.flash_addr_end = END_USER_DATA_F512K;
-    }
-    energy_cons.flash_addr_save = energy_cons.flash_addr_start;
-    save_data.energy = 0;
-    save_data.xor_energy = -1;
-    g_zcl_seAttrs.cur_sum_delivered = 0;
+nv_sts_t save_config_sensor(void) {
+#if NV_ENABLE
+	nv_sts_t ret = NV_SUCC;
+	if(memcmp(&sensor_pwr_coef_saved, &sensor_pwr_coef, sizeof(sensor_pwr_coef))) {
+		sensor_pwr_coef.energy = mul32x32_64(sensor_pwr_coef.power+220, 9544372) >> 32; // 0x100000000/(60*60/8)=9544371.76888
+		memcpy(&sensor_pwr_coef_saved, &sensor_pwr_coef, sizeof(sensor_pwr_coef));
+		ret = nv_flashWriteNew(1, NV_MODULE_APP,  NV_ITEM_APP_CFG_SENSOR, sizeof(sensor_pwr_coef), (uint8_t*)&sensor_pwr_coef);
+	}
+    return ret;
+#else
+    return NV_ENABLE_PROTECT_ERROR;
+#endif
 }
 
 
-// Read & check valid blk (Save Energy)
-static int check_saved_blk(uint32_t flash_addr, save_data_t * pdata) {
-    if(flash_addr >= energy_cons.flash_addr_end)
-        flash_addr = energy_cons.flash_addr_start;
-    flash_read_page(flash_addr, sizeof(save_data_t), (uint8_t*)pdata);
-    if(pdata->energy == -1 && pdata->xor_energy == -1) {
-        return -1;
-    } else if(pdata->energy == ~pdata->xor_energy) {
-        return 0;
-    }
-    return 1;
-}
-
-// Start initialize (Save Energy)
-int energy_restore(void) {
-    int ret;
-    uint32_t flash_addr;
-
-    save_data_t tst_data;
-
-    init_save_addr_drv();
-
-    flash_addr = energy_cons.flash_addr_start;
-
-    while(flash_addr < energy_cons.flash_addr_end) {
-        flash_addr &= ~(FLASH_SECTOR_SIZE-1);
-        ret = check_saved_blk(flash_addr, &tst_data);
-        if(ret < 0) {
-            flash_addr += FLASH_SECTOR_SIZE;
-            continue;
-        }
-        if(ret == 0) {
-            memcpy(&save_data, &tst_data, sizeof(save_data)); // save_data = tst_data;
-            if((check_saved_blk(flash_addr + FLASH_SECTOR_SIZE, &tst_data) == 0)
-            && tst_data.energy > save_data.energy) {
-                flash_addr += FLASH_SECTOR_SIZE;
-                continue;
-            }
-        }
-        flash_addr += sizeof(tst_data);
-        while(flash_addr < energy_cons.flash_addr_end) {
-            ret = check_saved_blk(flash_addr, &tst_data);
-            if(ret == 0) {
-                if(tst_data.energy > save_data.energy) {
-                    memcpy(&save_data, &tst_data, sizeof(save_data)); // save_data = tst_data;
-                } else {
-                    flash_addr &= ~(FLASH_SECTOR_SIZE-1);
-                    energy_cons.flash_addr_save = flash_addr;
-                    g_zcl_seAttrs.cur_sum_delivered = save_data.energy;
-                    return 0;
-                }
-            } else if(ret < 0) {
-                energy_cons.flash_addr_save = flash_addr;
-                g_zcl_seAttrs.cur_sum_delivered = save_data.energy;
-                return 0;
-            }
-            flash_addr += sizeof(tst_data);
-        }
-    }
-    return 1;
-}
-
-// Clear all USER_DATA (Save Energy)
-void energy_remove(void) {
-    init_save_addr_drv();
-    clear_user_data();
-}
-
-// Step 1 minutes (Save Energy)
-int32_t energy_timerCb(void *args) {
-
-    if (new_save_data) {
-        new_save_data = false;
-        TL_SCHEDULE_TASK(save_dataCb, NULL);
-    }
-    return 0;
-}
 
 
 #endif // USE_BL0937
