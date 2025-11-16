@@ -28,8 +28,10 @@ jobs:
 
     - name: make all
       run: |
-        make clean
-        make all
+        #make clean
+        #make all
+        make -s -j clean
+        make -s -j VERSION_BIN=%SWVER% PROJECT_NAME=MZSW02 POJECT_DEF="-DBOARD=BOARD_MZSW02_BL0937"
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
