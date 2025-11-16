@@ -1,0 +1,41 @@
+name: Build Telink Project
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      PROJECT_NAME: test
+      VERSION_BIN: ""
+      PGM_PORT: COM6
+      USE_ZB: 0
+      PYTHON: python3
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip unzip bzip2 make gcc
+
+    - name: make install
+      run: make install
+
+    - name: make all
+      run: |
+        make clean
+        make all
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-output
+        path: |
+          bin/*.bin
+          bin/*.zigbee
+          build/*.elf
