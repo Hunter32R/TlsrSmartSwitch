@@ -293,7 +293,7 @@ $(SDK_PATH):
 $(TC32_PATH): $(TOOLS_PATH)
 ifneq ($(TC32_PATH),$(wildcard $(TC32_PATH)))
 ifeq (linux,$(CUR_OS))
-	#@wget -P $(TOOLS_PATH) http://shyboy.oss-cn-shenzhen.aliyuncs.com/readonly/tc32_gcc_v2.0.tar.bz2 
+	@wget -P $(TOOLS_PATH) http://shyboy.oss-cn-shenzhen.aliyuncs.com/readonly/tc32_gcc_v2.0.tar.bz2 
 	@tar -xvjf $(TOOLS_PATH)/tc32_gcc_v2.0.tar.bz2 -C $(TOOLS_PATH)
 else
 	@unzip -o $(TOOLS_PATH)/tc32.zip -d $(TOOLS_PATH)
